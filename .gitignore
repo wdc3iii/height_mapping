@@ -1,0 +1,22 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+.colcon/
+**/COLCON_IGNORE
+
+# Python / C++
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.o
+*.obj
+
+# VSCode / JetBrains
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
