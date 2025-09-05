@@ -7,9 +7,9 @@ height_map_node:
     big_width: 400
     big_height: 400
     shift_thresh_m: 0.5
-    max_height: 2.0
-    z_min: -50.0
-    z_max:  50.0
+    max_height: 1.0
+    z_min: -1.0
+    z_max:  1.0
     drop_thresh: 0.07
     min_support: 4
 

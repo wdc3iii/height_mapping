@@ -1,0 +1,3 @@
+[submodule "src/fastlio_vel"]
+	path = src/fastlio_vel
+	url = git@github.com:wdc3iii/FAST_LIO_vel.git

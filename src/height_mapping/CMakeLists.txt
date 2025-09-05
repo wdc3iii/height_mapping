@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(largegrid_elevation_map)
+project(height_mapping)
 
 set(CMAKE_CXX_STANDARD 17)
 add_compile_options(-O3 -march=native -mtune=native)
@@ -8,11 +8,11 @@ find_package(ament_cmake REQUIRED)
 find_package(OpenCV REQUIRED)
 
 # Core library (no ROS deps)
-add_library(lem_core
-  src/LargeGridElevationMap.cpp
+add_library(height_mapping_core
+  src/HeightMapping.cpp
 )
-target_include_directories(lem_core PUBLIC include)
-target_link_libraries(lem_core PUBLIC ${OpenCV_LIBS})
+target_include_directories(height_mapping_core PUBLIC include)
+target_link_libraries(height_mapping_core PUBLIC ${OpenCV_LIBS})
 
 # ROS 2 node
 find_package(rclcpp REQUIRED)
@@ -24,15 +24,38 @@ find_package(cv_bridge REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
 
-add_executable(lem_node src/lem_node.cpp)
-target_include_directories(lem_node PUBLIC include)
-ament_target_dependencies(lem_node
-  rclcpp sensor_msgs nav_msgs tf2 tf2_ros cv_bridge pcl_conversions PCL
+add_executable(height_mapping_node src/HeightMappingNode.cpp)
+target_include_directories(height_mapping_node PUBLIC include ${PCL_INCLUDE_DIRS})
+ament_target_dependencies(height_mapping_node
+  rclcpp sensor_msgs nav_msgs tf2 tf2_ros cv_bridge pcl_conversions
 )
-target_link_libraries(lem_node PRIVATE lem_core ${OpenCV_LIBS})
 
-install(TARGETS lem_core DESTINATION lib)
-install(TARGETS lem_node DESTINATION lib/${PROJECT_NAME})
+# Use the PLAIN signature here to match ament_target_dependencies' usage
+target_link_libraries(height_mapping_node
+  height_mapping_core
+  ${OpenCV_LIBS}
+  ${PCL_LIBRARIES}
+)
+
+# (optional) if PCL sets definitions on your platform
+if(PCL_DEFINITIONS)
+  add_definitions(${PCL_DEFINITIONS})
+endif()
+
+install(TARGETS height_mapping_core DESTINATION lib)
+install(TARGETS height_mapping_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 
 ament_package()
+
+option(BUILD_TESTS "Build test executables" ON)
+
+if(BUILD_TESTS)
+  add_executable(test_pole_occlusion test/test_pole_occlusion.cpp)
+  target_link_libraries(test_pole_occlusion PRIVATE height_mapping_core ${OpenCV_LIBS})
+  target_include_directories(test_pole_occlusion PRIVATE include)
+
+  add_executable(test_stair_occlusion test/test_stair_occlusion.cpp)
+  target_link_libraries(test_stair_occlusion PRIVATE height_mapping_core ${OpenCV_LIBS})
+  target_include_directories(test_stair_occlusion PRIVATE include)
+endif()

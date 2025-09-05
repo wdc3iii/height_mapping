@@ -1,68 +1,61 @@
 #pragma once
 #include <vector>
 #include <cstdint>
-#include <cmath>
 #include <mutex>
 #include <limits>
+#include <cmath>
 #include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>  // connectedComponents
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
+
 
 namespace height_mapping {
 
 struct Point3f { float x,y,z; };
 
 struct SubgridMeta {
-  // bottom-left of subgrid in world (map) coords, and yaw (radians)
   double origin_x{0.0}, origin_y{0.0}, yaw{0.0};
   float  resolution{0.05f};
   int width{0}, height{0};
 };
 
 struct Params {
-  // Big axis-aligned grid (ring buffer)
+  // Big grid
   double res = 0.05;
-  int Wb = 400, Hb = 400;
+  int    Wb = 400, Hb = 400;
   double max_h = 2.0;
-  double z_min = -1.0, z_max = 2.0;
+  double z_min = -10.0, z_max = 2.0;
   double drop_thresh = 0.07;
   int    min_support = 4;
-  double shift_thresh = 0.5;     // meters, recenter threshold
+  double shift_thresh = 0.5;
 
-  // Subgrid generation
+  // Subgrid
   int    Wq = 200, Hq = 200;
   double res_q = 0.05;
-  double occluded_fraction_threshold = 0.5;  // 0..1
+
+  // --- NEW: histogram / connectivity settings ---
+  double z_hist_bin = 0.02;      // bin size [m], choose <= δ/2
+  double z_connect_delta = 0.05; // δ: tolerate gaps up to this [m]
+  int    z_bin_min_count = 2;    // min bin occupancy to count as "present"
 };
+
+void save_png(const cv::Mat& m, const std::string& path);
 
 class HeightMap {
 public:
   explicit HeightMap(const Params& p);
-  ~HeightMap() = default;
-
-  // (Re)initialize big grid and internal buffers
   void reset();
 
-  // Set/ensure initial origin so robot is centered on big grid
   void ensureOrigin(double robot_x, double robot_y);
-  bool haveOrigin() const { return have_origin_; }
-
-  // Recenter the big grid (ring buffer shifts) if robot deviates enough
   void recenterIfNeeded(double robot_x, double robot_y);
 
-  // Ingest a batch of points already in the world/map frame
-  // (fastLIO cloud → TF → points → call this)
   void ingestPoints(const std::vector<Point3f>& pts);
 
-  // Generate a robot-centered, robot-aligned subgrid (raw + filled)
-  // Returns sub_raw and sub_filled; fills out meta.
-  void generateSubgrid(double robot_x, double robot_y, double robot_yaw,
+  void generateSubgrid(double rx, double ry, double rYaw,
                        cv::Mat& sub_raw, cv::Mat& sub_filled, SubgridMeta& meta) const;
 
-  // Optional: expose big-grid debug snapshots (thread-safe copies)
-  void snapshotBig(cv::Mat& height, cv::Mat& known, cv::Mat& occluded) const;
-
-  // Accessors for params
-  const Params& params() const { return params_; }
+  void snapshotBig(cv::Mat& H, cv::Mat& K, cv::Mat& O) const;
+  bool haveOrigin() const { return have_origin_; }
 
 private:
   inline size_t idxRB(int i, int j) const noexcept {
@@ -73,24 +66,54 @@ private:
 
   void shiftRingBuffer_(int si, int sj);
 
-  // Brushfire fill (occluded clusters) on a subgrid
-  void brushfireFill_(const cv::Mat& sub_raw, const cv::Mat& sub_occ, const cv::Mat& sub_edge,
+  // Bilinear sampling of both raw height and boundary-connected height
+  void sampleBilinearBoth_(double wx, double wy,
+                           float& h_raw, float& h_bound,
+                           uint8_t& occ_val, uint8_t& edge_touch) const;
+
+  // Brushfire now uses sub_bound for boundary minima
+  void brushfireFill_(const cv::Mat& sub_raw,
+                      const cv::Mat& sub_bound,
+                      const cv::Mat& sub_occ,
+                      const cv::Mat& sub_edge,
                       cv::Mat& sub_filled) const;
 
-  // Bilinear sampling from big grid → one subgrid cell
-  void sampleBilinear_(double wx, double wy,
-                       float& h_val, uint8_t& occ_val, uint8_t& edge_touch) const;
+  // --- NEW: per-cell z-histogram aggregator ---
+  struct ZAgg {
+    std::vector<uint8_t> bins; // size B_
+    int min_bin;               // lowest non-empty bin index (or B_ if none)
+    int top_conn_from_min;     // highest δ-connected bin from min_bin
+    float h_min;               // cached meters
+    float h_conn_max;          // cached meters (to sample into sub_bound)
+    ZAgg() : min_bin(0), top_conn_from_min(-1), h_min(0), h_conn_max(0) {}
+  };
+
+  inline void zaggInit_(ZAgg& a) const {
+    a.bins.assign(B_, 0u);
+    a.min_bin = B_;
+    a.top_conn_from_min = -1;
+    a.h_min = static_cast<float>(max_h_);
+    a.h_conn_max = static_cast<float>(max_h_);
+  }
+
+  inline void zaggInsert_(ZAgg& a, float z); // update bins & caches
 
 private:
+  // Params & sizes
   Params params_;
-
-  // Big grid storage (ring buffer)
-  int Wb_, Hb_;
+  int    Wb_, Hb_;
   double res_;
   double max_h_, zmin_, zmax_, drop_thresh_;
-  int min_support_;
+  int    min_support_;
   double shift_thresh_;
 
+  // Histogram config (derived)
+  int    B_;             // number of bins
+  double bin_size_;      // = params_.z_hist_bin
+  int    max_empty_bins_; // allowed consecutive empty bins within δ
+  int    bin_min_count_; // occupancy threshold per bin
+
+  // Big grid ring buffer & origin
   mutable std::mutex m_;
   std::vector<float>   height_b_;
   std::vector<uint8_t> known_b_;
@@ -100,9 +123,26 @@ private:
   double origin_x_{0.0}, origin_y_{0.0};
   bool have_origin_{false};
 
-  // Per-scan temp buckets (reused each call to ingestPoints)
+  // NEW: per-cell z-aggregator + cached boundary-connected height
+  std::vector<ZAgg>  zagg_b_;   // size Wb*Hb
+  std::vector<float> hconn_b_;  // cached h_conn_max per cell (meters)
+
+  // Per-scan buckets (for min fusion)
   std::vector<float> temp_min_;
   std::vector<int>   temp_cnt_;
+
+  // New members (private)
+  std::vector<float> filled_b_;   // big-grid solved height (ring-buffer layout)
+  bool have_prev_fill_ = false;   // warm-start available
+  // Optional: last full-grid solution as a cv::Mat for warm start convenience
+  cv::Mat prev_fill_full_;        // Hb_ x Wb_, row-major (no ring), optional
+
+  // Bump whenever the big grid's alignment/content changes (shift/clear).
+  std::uint64_t rb_version_ = 0;
+
+  // New methods (private)
+  void solveGlobalFill_();                 // run after ingestPoints()
+  inline void sampleFilled_(double wx, double wy, float& h_fill) const;
 };
 
-} // namespace lem
+} // namespace height_mapping

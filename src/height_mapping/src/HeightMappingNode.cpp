@@ -17,7 +17,7 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 
-#include "height_mapping.hpp"
+#include "HeightMapping.hpp"
 
 class HeightMapNode : public rclcpp::Node {
 public:
@@ -25,7 +25,7 @@ public:
               tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
 
     // --- params ---
-    lem::Params P;
+    height_mapping::Params P;
     map_frame_    = declare_parameter<std::string>("map_frame", "map");
     base_frame_   = declare_parameter<std::string>("base_frame", "base_link");
     topic_cloud_  = declare_parameter<std::string>("topic_cloud", "/cloud_registered");
@@ -44,15 +44,13 @@ public:
     P.Wq          = declare_parameter<int>("sub_width", 200);
     P.Hq          = declare_parameter<int>("sub_height", 200);
     P.res_q       = declare_parameter<double>("sub_resolution", P.res);
-    P.occluded_fraction_threshold =
-                   declare_parameter<double>("occluded_fraction_threshold", 0.5);
 
     publish_rate_ = declare_parameter<double>("publish_rate_hz", 10.0);
     use_voxel_ds_ = declare_parameter<bool>("voxel_downsample", false);
     voxel_leaf_   = declare_parameter<double>("voxel_leaf", 0.05);
     transform_cloud_if_needed_ = declare_parameter<bool>("transform_cloud", true);
 
-    mapper_ = std::make_shared<lem::HeightMap>(P);
+    mapper_ = std::make_shared<height_mapping::HeightMap>(P);
 
     // pubs/subs
     pub_raw_  = create_publisher<sensor_msgs::msg::Image>("height_grid/sub_raw", 1);
@@ -69,7 +67,7 @@ public:
         std::chrono::duration_cast<std::chrono::milliseconds>(period),
         std::bind(&HeightMapNode::onPublish, this));
 
-    RCLCPP_INFO(get_logger(), "LEM node up: big %dx%d @%.2f, sub %dx%d @%.2f",
+    RCLCPP_INFO(get_logger(), "hieght_mapping node up: big %dx%d @%.2f, sub %dx%d @%.2f",
                 P.Wb, P.Hb, P.res, P.Wq, P.Hq, P.res_q);
   }
 
@@ -99,14 +97,20 @@ private:
     sensor_msgs::msg::PointCloud2 cloud_ds;
 
     if (use_voxel_ds_) {
-      pcl::PCLPointCloud2 pcl_pc2; pcl_conversions::toPCL(*msg, pcl_pc2);
-      pcl::PCLPointCloud2 pcl_out;
-      pcl::VoxelGrid<pcl::PCLPointCloud2> vg;
-      vg.setInputCloud(pcl_pc2.makeShared());
-      vg.setLeafSize(voxel_leaf_, voxel_leaf_, voxel_leaf_);
-      vg.filter(pcl_out);
-      pcl_conversions::fromPCL(pcl_out, cloud_ds);
-      cloud_in = &cloud_ds;
+        pcl::PCLPointCloud2 pcl_pc2;
+        pcl_conversions::toPCL(*msg, pcl_pc2);
+
+        pcl::PCLPointCloud2::Ptr pcl_in(new pcl::PCLPointCloud2(pcl_pc2));  // <- PCL-compatible Ptr
+        pcl::PCLPointCloud2 pcl_out;
+
+        pcl::VoxelGrid<pcl::PCLPointCloud2> vg;
+        vg.setInputCloud(pcl_in);
+        vg.setLeafSize(voxel_leaf_, voxel_leaf_, voxel_leaf_);
+        vg.filter(pcl_out);
+
+        sensor_msgs::msg::PointCloud2 cloud_ds;
+        pcl_conversions::fromPCL(pcl_out, cloud_ds);
+        cloud_in = &cloud_ds;
     }
 
     // Transform to map if required (on-the-fly numeric TF)
@@ -138,7 +142,7 @@ private:
     }
 
     // Convert cloud to vector<Point3f> in map frame
-    std::vector<lem::Point3f> pts;
+    std::vector<height_mapping::Point3f> pts;
     pts.reserve(cloud_in->width * cloud_in->height);
 
     sensor_msgs::PointCloud2ConstIterator<float> it_x(*cloud_in, "x");
@@ -153,7 +157,7 @@ private:
         const double zz = r20*x + r21*y + r22*z + tz;
         x = xx; y = yy; z = zz;
       }
-      pts.push_back(lem::Point3f{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
+      pts.push_back(height_mapping::Point3f{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
     }
 
     mapper_->ingestPoints(pts);
@@ -166,7 +170,7 @@ private:
     if (!mapper_->haveOrigin()) return;
 
     cv::Mat sub_raw, sub_filled;
-    lem::SubgridMeta meta;
+    height_mapping::SubgridMeta meta;
     mapper_->generateSubgrid(rx, ry, rYaw, sub_raw, sub_filled, meta);
 
     // Publish images
@@ -216,7 +220,7 @@ private:
   tf2_ros::TransformListener tf_listener_;
 
   // Core mapper
-  std::shared_ptr<lem::HeightMap> mapper_;
+  std::shared_ptr<height_mapping::HeightMap> mapper_;
 };
 
 int main(int argc, char** argv) {
