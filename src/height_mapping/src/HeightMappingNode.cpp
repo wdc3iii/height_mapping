@@ -74,7 +74,7 @@ public:
 private:
   bool getRobotPose(const rclcpp::Time& t, double& x, double& y, double& z, double& yaw) {
     try {
-      RCLCPP_DEBUG(get_logger(), "Attempting TF lookup: %s -> %s", map_frame_.c_str(), base_frame_.c_str());
+      RCLCPP_INFO(get_logger(), "Attempting TF lookup: %s -> %s", map_frame_.c_str(), base_frame_.c_str());
       // Try with exact timestamp first
       auto T = tf_buffer_.lookupTransform(map_frame_, base_frame_, t, tf2::durationFromSec(0.2));
       x = T.transform.translation.x;
@@ -84,12 +84,12 @@ private:
       tf2::Quaternion qq(q.x, q.y, q.z, q.w);
       tf2::Matrix3x3 R(qq);
       double roll, pitch; R.getRPY(roll, pitch, yaw);
-      RCLCPP_DEBUG(get_logger(), "TF lookup success: pose (%.2f, %.2f, %.2f, %.2f)", x, y, z, yaw);
+      RCLCPP_INFO(get_logger(), "TF lookup success: pose (%.2f, %.2f, %.2f, %.2f)", x, y, z, yaw);
       return true;
     } catch (const tf2::ExtrapolationException& e) {
       // If extrapolation fails, try with latest available transform
       try {
-        RCLCPP_DEBUG(get_logger(), "Extrapolation failed, trying latest transform");
+        RCLCPP_INFO(get_logger(), "Extrapolation failed, trying latest transform");
         auto T = tf_buffer_.lookupTransform(map_frame_, base_frame_, tf2::TimePointZero);
         x = T.transform.translation.x;
         y = T.transform.translation.y;
@@ -98,7 +98,7 @@ private:
         tf2::Quaternion qq(q.x, q.y, q.z, q.w);
         tf2::Matrix3x3 R(qq);
         double roll, pitch; R.getRPY(roll, pitch, yaw);
-        RCLCPP_DEBUG(get_logger(), "TF lookup success with latest: pose (%.2f, %.2f, %.2f, %.2f)", x, y, z, yaw);
+        RCLCPP_INFO(get_logger(), "TF lookup success with latest: pose (%.2f, %.2f, %.2f, %.2f)", x, y, z, yaw);
         return true;
       } catch (const std::exception& e2) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "TF lookup failed (latest): %s", e2.what());
@@ -117,10 +117,10 @@ private:
     // TF: ensure origin & recenter
     double rx, ry, rz, rYaw;
     if (!getRobotPose(msg->header.stamp, rx, ry, rz, rYaw)) {
-      RCLCPP_DEBUG(get_logger(), "Skipping cloud processing - no robot pose");
+      RCLCPP_INFO(get_logger(), "Skipping cloud processing - no robot pose");
       return;
     }
-    RCLCPP_DEBUG(get_logger(), "Processing cloud at robot pose (%.2f, %.2f, %.2f, %.2f)", rx, ry, rz, rYaw);
+    RCLCPP_INFO(get_logger(), "Processing cloud at robot pose (%.2f, %.2f, %.2f, %.2f)", rx, ry, rz, rYaw);
     
     mapper_->ensureOrigin(rx, ry, rz);
     mapper_->recenterIfNeeded(rx, ry, rz);
@@ -192,30 +192,30 @@ private:
       pts.push_back(height_mapping::Point3f{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
     }
 
-    RCLCPP_DEBUG(get_logger(), "Ingesting %zu points into height map", pts.size());
+    RCLCPP_INFO(get_logger(), "Ingesting %zu points into height map", pts.size());
     mapper_->ingestPoints(pts);
-    RCLCPP_DEBUG(get_logger(), "Point ingestion completed");
+    RCLCPP_INFO(get_logger(), "Point ingestion completed");
   }
 
   void onPublish() {
-    RCLCPP_DEBUG(get_logger(), "Publish timer callback triggered");
+    RCLCPP_INFO(get_logger(), "Publish timer callback triggered");
     
     // Pose at publish time
     double rx, ry, rz, rYaw;
     if (!getRobotPose(now(), rx, ry, rz, rYaw)) {
-      RCLCPP_DEBUG(get_logger(), "Skipping publish - no robot pose");
+      RCLCPP_INFO(get_logger(), "Skipping publish - no robot pose");
       return;
     }
     if (!mapper_->haveOrigin()) {
-      RCLCPP_DEBUG(get_logger(), "Skipping publish - no map origin set");
+      RCLCPP_INFO(get_logger(), "Skipping publish - no map origin set");
       return;
     }
 
-    RCLCPP_DEBUG(get_logger(), "Generating subgrid at pose (%.2f, %.2f, %.2f, %.2f)", rx, ry, rz, rYaw);
+    RCLCPP_INFO(get_logger(), "Generating subgrid at pose (%.2f, %.2f, %.2f, %.2f)", rx, ry, rz, rYaw);
     cv::Mat sub_raw, sub_filled;
     height_mapping::SubgridMeta meta;
     mapper_->generateSubgrid(rx, ry, rYaw, sub_raw, sub_filled, meta);
-    RCLCPP_DEBUG(get_logger(), "Subgrid generated: %dx%d", meta.width, meta.height);
+    RCLCPP_INFO(get_logger(), "Subgrid generated: %dx%d", meta.width, meta.height);
 
     // Publish height point clouds
     auto stamp = now();
@@ -344,7 +344,7 @@ private:
     
     pub_raw_->publish(*createPointCloud(sub_raw));
     pub_fill_->publish(*createPointCloud(sub_filled));
-    RCLCPP_DEBUG(get_logger(), "Published height maps and metadata");
+    RCLCPP_INFO(get_logger(), "Published height maps and metadata");
   }
 
 private:

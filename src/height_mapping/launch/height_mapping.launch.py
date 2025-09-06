@@ -30,14 +30,14 @@ def generate_launch_description():
         name='height_mapping_node',
         parameters=[{
             'use_sim_time': True,
-            'map_frame': 'camera_init',
+            'map_frame': 'odom',
             'base_frame': 'body', 
             'topic_cloud': '/cloud_registered',
             'livox_frame': '',
             'resolution': 0.2,
             'big_width': 100,
             'big_height': 100,
-            'max_height': 20.0,
+            'max_height': 2.0,
             'z_min': -20.0,
             'z_max': 20.0,
             'drop_thresh': 0.07,
@@ -49,7 +49,7 @@ def generate_launch_description():
             'publish_rate_hz': 10.0,
             'voxel_downsample': False,
             'voxel_leaf': 0.05,
-            'transform_cloud': False
+            'transform_cloud': True
         }],
         output='screen',
         respawn=True,
