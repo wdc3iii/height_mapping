@@ -3,19 +3,19 @@ height_map_node:
     map_frame: map
     base_frame: base_link
     topic_cloud: /cloud_registered
-    resolution: 0.05
-    big_width: 400
-    big_height: 400
+    resolution: 0.025
+    big_width: 800
+    big_height: 800
     shift_thresh_m: 0.5
     max_height: 2.0
-    z_min: -10.0
-    z_max:  10.0
-    drop_thresh: 0.07
-    min_support: 4
+    z_min: -4.0
+    z_max:  4.0
+    drop_thresh: 0.25
+    min_support: 2
 
-    sub_width: 200
-    sub_height: 200
-    sub_resolution: 0.05
+    sub_width: 400
+    sub_height: 400
+    sub_resolution: 0.025
     publish_rate_hz: 10.0
 
     occluded_fraction_threshold: 0.5

@@ -33,10 +33,10 @@ public:
     P.Hb          = declare_parameter<int>("big_height", 400);
     P.max_h       = declare_parameter<double>("max_height", 2.0);
     max_height_   = P.max_h;
-    P.z_min       = declare_parameter<double>("z_min", -1.0);
-    P.z_max       = declare_parameter<double>("z_max",  2.0);
-    P.drop_thresh = declare_parameter<double>("drop_thresh", 0.07);
-    P.min_support = declare_parameter<int>("min_support", 4);
+    P.z_min       = declare_parameter<double>("z_clip_low", -4.0);
+    P.z_max       = declare_parameter<double>("z_clip_high",  4.0);
+    P.drop_thresh = declare_parameter<double>("drop_thresh", 0.25);
+    P.min_support = declare_parameter<int>("min_support", 2);
     P.shift_thresh= declare_parameter<double>("shift_thresh_m", 0.5);
 
     P.Wq          = declare_parameter<int>("sub_width", 200);

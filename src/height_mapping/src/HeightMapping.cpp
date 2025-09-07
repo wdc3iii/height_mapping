@@ -554,7 +554,7 @@ void HeightMap::ingestPoints(const std::vector<Point3f>& pts) {
 
   // Bin points: update temp_min_ and z-histograms together
   for (const auto& p : pts) {
-    if (p.z < zmin_ || p.z > zmax_) continue;
+    if (p.z < robot_z_ + params_.z_min || p.z > robot_z_ + params_.z_max) continue;
     const int j = static_cast<int>(std::floor((p.x - origin_x_) / res_));
     const int i = static_cast<int>(std::floor((p.y - origin_y_) / res_));
     if (i < 0 || i >= Hb_ || j < 0 || j >= Wb_) continue;
@@ -626,6 +626,7 @@ void HeightMap::generateSubgrid(double rx, double ry, double rYaw,
   double origin_x, origin_y, res;
   int start_i, start_j;
   const double max_h = max_h_ + robot_z_;
+  const double min_h = -max_h_ + robot_z_;
 
   // Local copies of ring-buffered arrays (flat, row-major)
   std::vector<float> snap_height;
@@ -714,6 +715,7 @@ void HeightMap::generateSubgrid(double rx, double ry, double rYaw,
     const float f01 = snap_filled[id01], f11 = snap_filled[id11];
 
     h_fill = static_cast<float>(w00*f00 + w10*f10 + w01*f01 + w11*f11);
+    h_fill = std::min(std::max(h_fill, static_cast<float>(min_h)), static_cast<float>(max_h));
   };
 
   // ---- Now do the usual subgrid sampling with NO locks
