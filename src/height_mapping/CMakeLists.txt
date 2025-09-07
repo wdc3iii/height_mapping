@@ -65,4 +65,8 @@ if(BUILD_TESTS)
   add_executable(test_stair_occlusion test/test_stair_occlusion.cpp)
   target_link_libraries(test_stair_occlusion PRIVATE height_mapping_core ${OpenCV_LIBS})
   target_include_directories(test_stair_occlusion PRIVATE include)
+
+  add_executable(test_stair_occlusion_multipos test/test_stair_occlusion_multipos.cpp)
+  target_link_libraries(test_stair_occlusion_multipos PRIVATE height_mapping_core ${OpenCV_LIBS})
+  target_include_directories(test_stair_occlusion_multipos PRIVATE include)
 endif()

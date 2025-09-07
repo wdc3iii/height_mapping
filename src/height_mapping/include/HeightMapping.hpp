@@ -24,7 +24,7 @@ struct Params {
   double res = 0.05;
   int    Wb = 400, Hb = 400;
   double max_h = 2.0;
-  double z_min = -10.0, z_max = 2.0;
+  double z_min = -10.0, z_max = 10.0;
   double drop_thresh = 0.07;
   int    min_support = 4;
   double shift_thresh = 0.5;

@@ -104,7 +104,7 @@ HeightMap::HeightMap(const Params& p)
   bin_size_       = params_.z_hist_bin;
   z_shift_thresh_ = params_.z_shift_thresh;
   // Create enough bins to cover a reasonable height range around robot
-  const double hist_range = 2.0; // ±1m around robot
+  const double hist_range = 2 * std::ceil(max_h_ + z_shift_thresh_ + 0.1) / bin_size_;
   B_              = std::max(1, static_cast<int>(std::ceil(hist_range / bin_size_)));
   max_empty_bins_ = std::max(0, static_cast<int>(std::floor(params_.z_connect_delta / bin_size_)) - 1);
   bin_min_count_  = std::max(1, params_.z_bin_min_count);
@@ -157,53 +157,56 @@ void HeightMap::ensureOrigin(double robot_x, double robot_y, double robot_z) {
 void HeightMap::shiftRingBuffer_(int si, int sj) {
   std::lock_guard<std::mutex> lk(m_);
 
-  auto wipe_col = [&](int col) {
-    for (int row = 0; row < Hb_; ++row) {
-      size_t id = static_cast<size_t>(row) * Wb_ + static_cast<size_t>(col);
-      height_b_[id] = static_cast<float>(max_h_ + robot_z_);
-      known_b_[id]  = 0;
-      occ_b_[id]    = 1;
-      stamp_b_[id]  = 0.0f;
-      zaggInit_(zagg_b_[id]);
-      hconn_b_[id]  = static_cast<float>(max_h_ + robot_z_);
-    }
-  };
-  auto wipe_row = [&](int row) {
-    size_t row_off = static_cast<size_t>(row) * Wb_;
-    for (int col = 0; col < Wb_; ++col) {
-      size_t id = row_off + static_cast<size_t>(col);
-      height_b_[id] = static_cast<float>(max_h_ + robot_z_);
-      known_b_[id]  = 0;
-      occ_b_[id]    = 1;
-      stamp_b_[id]  = 0.0f;
-      zaggInit_(zagg_b_[id]);
-      hconn_b_[id]  = static_cast<float>(max_h_ + robot_z_);
-    }
+  // Helper to initialize a cell to default state
+  auto wipe_cell = [&](size_t id) {
+    height_b_[id] = static_cast<float>(max_h_ + robot_z_);
+    known_b_[id]  = 0;
+    occ_b_[id]    = 1;
+    stamp_b_[id]  = 0.0f;
+    zaggInit_(zagg_b_[id]);  // Reset histogram - preserves zagg data in overlapping regions!
+    hconn_b_[id]  = static_cast<float>(max_h_ + robot_z_);
   };
 
+  // Only wipe the newly exposed columns/rows, not the overlapping regions
   if (sj != 0) {
+    // Update start index FIRST
     start_j_ = (start_j_ - sj) % Wb_; if (start_j_ < 0) start_j_ += Wb_;
+    
+    // Wipe only the new columns that came into view
     const int ncols = std::abs(sj);
-    const int dir   = (sj > 0) ? 1 : -1;
+    const int dir = (sj > 0) ? 1 : -1;
     for (int k = 0; k < ncols; ++k) {
-      int col = (dir > 0) ? ((Wb_ - 1 - k + start_j_) % Wb_) : ((k + start_j_) % Wb_);
-      wipe_col(col);
+      int col = (dir < 0) ? ((Wb_ - 1 - k + start_j_) % Wb_) : ((k + start_j_) % Wb_);
+      for (int row = 0; row < Hb_; ++row) {
+        size_t id = static_cast<size_t>(row) * Wb_ + static_cast<size_t>(col);
+        wipe_cell(id);
+      }
     }
   }
+  
   if (si != 0) {
+    // Update start index FIRST  
     start_i_ = (start_i_ - si) % Hb_; if (start_i_ < 0) start_i_ += Hb_;
+    
+    // Wipe only the new rows that came into view
     const int nrows = std::abs(si);
-    const int dir   = (si > 0) ? 1 : -1;
+    const int dir = (si < 0) ? 1 : -1;
     for (int k = 0; k < nrows; ++k) {
       int row = (dir > 0) ? ((Hb_ - 1 - k + start_i_) % Hb_) : ((k + start_i_) % Hb_);
-      wipe_row(row);
+      size_t row_off = static_cast<size_t>(row) * Wb_;
+      for (int col = 0; col < Wb_; ++col) {
+        size_t id = row_off + static_cast<size_t>(col);
+        wipe_cell(id);
+      }
     }
   }
+  
   ++rb_version_;
 }
 
 void HeightMap::recenterIfNeeded(double robot_x, double robot_y, double robot_z) {
   if (!have_origin_) return;
+  std::cout << "Pre-centered: origin=(" << origin_x_ << "," << origin_y_ << "), robot_z=" << robot_z_ << std::endl;
   
   // Check x,y recentering
   const double cx = origin_x_ + 0.5 * Wb_ * res_;
@@ -223,14 +226,15 @@ void HeightMap::recenterIfNeeded(double robot_x, double robot_y, double robot_z)
   }
   
   if (need_xy_shift) {
-    const int sj = static_cast<int>(std::floor(dx / res_));
-    const int si = static_cast<int>(std::floor(dy / res_));
+    const int sj = static_cast<int>(dx / res_);   //casting as int truncates towards zero
+    const int si = static_cast<int>(dy / res_);
     if (si != 0 || sj != 0) {
       origin_x_ += sj * res_;
       origin_y_ += si * res_;
-      shiftRingBuffer_(si, sj);
+      shiftRingBuffer_(-si, -sj);
     }
   }
+  std::cout << "Recentered: origin=(" << origin_x_ << "," << origin_y_ << "), robot_z=" << robot_z_ << std::endl;
 }
 
 // --- per-cell histogram update ---
@@ -277,17 +281,17 @@ void HeightMap::recenterHistogramBounds_(double new_robot_z) {
   const double old_center = hist_z_center_;
   const double old_min = hist_z_min_;
   
-  // Update histogram bounds to be centered around new robot z
-  const double hist_range = B_ * bin_size_;
-  hist_z_center_ = new_robot_z;
-  hist_z_min_ = new_robot_z - hist_range / 2.0;
-  hist_z_max_ = new_robot_z + hist_range / 2.0;
-  
   // Calculate how many bins we need to shift
   const double z_shift = new_robot_z - old_center;
-  const int shift_bins = static_cast<int>(std::round(z_shift / bin_size_));
+  const int shift_bins = static_cast<int>(z_shift / bin_size_);
   
   if (shift_bins == 0) return; // No shifting needed
+
+  // Update histogram bounds to be centered around new robot z
+  const double hist_range = B_ * bin_size_;
+  hist_z_center_ += shift_bins * bin_size_;
+  hist_z_min_ += shift_bins * bin_size_;
+  hist_z_max_ += shift_bins * bin_size_;
   
   // Cycle all histogram bins
   std::lock_guard<std::mutex> lk(m_);
@@ -343,6 +347,9 @@ void HeightMap::cycleBins_(ZAgg& agg, int shift_bins) {
 
 void HeightMap::solveGlobalFill_()
 {
+  static int run_counter = 0;
+  const std::string run_suffix = "_" + std::to_string(run_counter++);
+  
   PROFILE_START(total_solve);
   
   // ---------- Snapshot under one short lock ----------
@@ -369,9 +376,9 @@ void HeightMap::solveGlobalFill_()
   }
   PROFILE_END(copy_from_ringbuffer);
 
-  PROFILE_SAVE_PNG(big_height, "big_height0.png");
-  PROFILE_SAVE_PNG(big_boundary_conn, "big_boundary_conn0.png");
-  PROFILE_SAVE_PNG(big_occluded, "big_occluded0.png");
+  PROFILE_SAVE_PNG(big_height, "big_height0" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(big_boundary_conn, "big_boundary_conn0" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(big_occluded, "big_occluded0" + run_suffix + ".png");
 
   // ---------- Build occlusion mask & edge clusters ----------
   PROFILE_START(connected_components);
@@ -394,7 +401,6 @@ void HeightMap::solveGlobalFill_()
   PROFILE_START(set_boundary_occlusions);
   // TODO: do we need the additional clones? we have already coppied height_b
   cv::Mat working_mask = occ_mask.clone(); // we'll edit this
-  cv::Mat changed_working_mask(working_mask.rows, working_mask.cols, CV_8UC1, cv::Scalar(0));       // 1=occluded, 0=observed
   cv::Mat solver_field = big_height.clone(); // used by the PDE
   for (int i = 0; i < Hb_; ++i) {
     uint8_t* working_mask_row = working_mask.ptr<uint8_t>(i);
@@ -409,8 +415,8 @@ void HeightMap::solveGlobalFill_()
     }
   }
   PROFILE_END(set_boundary_occlusions);
-  PROFILE_SAVE_PNG(working_mask * 255, "working_mask0.png");
-  PROFILE_SAVE_PNG(solver_field, "solver_field0.png");
+  PROFILE_SAVE_PNG(working_mask * 255, "working_mask0" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(solver_field, "solver_field0" + run_suffix + ".png");
 
   // ---------- Dirichlet boundary only for the PDE (do NOT persist into output) ----------
   PROFILE_START(update_boundary_conditions);
@@ -418,7 +424,6 @@ void HeightMap::solveGlobalFill_()
   for (int i = 0; i < Hb_; ++i) {
     uint8_t* mrow = working_mask.ptr<uint8_t>(i);
     float* sf_row = solver_field.ptr<float>(i);
-    uint8_t* change_row = changed_working_mask.ptr<uint8_t>(i);
     for (int j = 0; j < Wb_; ++j) {
       if (!mrow[j]) {
         continue;
@@ -426,39 +431,29 @@ void HeightMap::solveGlobalFill_()
       bool updated = false;
       if (i > 0     && !working_mask.at<uint8_t>(i-1,j)) {
         // neighbor is known
-        float neighbor_conn = big_boundary_conn.at<float>(i-1,j);
-        sf_row[j] = updated ? std::max(sf_row[j], neighbor_conn) : neighbor_conn;
-        updated = true;
+        solver_field.at<float>(i-1,j)= big_boundary_conn.at<float>(i-1,j);
       }
       if (i+1 < Hb_ && !working_mask.at<uint8_t>(i+1,j)) {
         // neighbor is known
-        float neighbor_conn = big_boundary_conn.at<float>(i+1,j);
-        sf_row[j] = updated ? std::max(sf_row[j], neighbor_conn) : neighbor_conn;
-        updated = true;
+        solver_field.at<float>(i+1,j) = big_boundary_conn.at<float>(i+1,j);
       }
       if (j > 0     && !working_mask.at<uint8_t>(i,j-1)) {
         // neighbor is known
-        float neighbor_conn = big_boundary_conn.at<float>(i,j-1);
-        sf_row[j] = updated ? std::max(sf_row[j], neighbor_conn) : neighbor_conn;
-        updated = true;
+        sf_row[j] = big_boundary_conn.at<float>(i,j-1);
       }
       if (j+1 < Wb_ && !working_mask.at<uint8_t>(i,j+1)) {
         // neighbor is known
-        float neighbor_conn = big_boundary_conn.at<float>(i,j+1);
-        sf_row[j] = updated ? std::max(sf_row[j], neighbor_conn) : neighbor_conn;
-        updated = true;
+        sf_row[j+1] = big_boundary_conn.at<float>(i,j+1);;
       }
-      if (updated) {change_row[j] = 1;}
-      // else: keep raw height as boundary
     }
   }
   PROFILE_END(update_boundary_conditions);
 
-  PROFILE_SAVE_PNG(big_boundary_conn, "big_boundary_conn.png");
-  working_mask &= changed_working_mask == 0; // add these new boundary pixels to the PDE mask
-  PROFILE_SAVE_PNG(changed_working_mask * 255, "changed_working_mask.png");
-  PROFILE_SAVE_PNG(working_mask * 255, "working_mask1.png");
-  PROFILE_SAVE_PNG(solver_field, "solver_field1.png");
+  PROFILE_SAVE_PNG(big_boundary_conn, "big_boundary_conn1" + run_suffix + ".png");
+  // working_mask &= changed_working_mask == 0; // add these new boundary pixels to the PDE mask
+  // PROFILE_SAVE_PNG(changed_working_mask * 255, "changed_working_mask" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(working_mask * 255, "working_mask1" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(solver_field, "solver_field1" + run_suffix + ".png");
 
   // ---------- Warm start & clamp ----------
   PROFILE_START(laplace_solve);
@@ -483,14 +478,13 @@ void HeightMap::solveGlobalFill_()
 
   // ---------- Build final field: keep observed cells as raw heights ----------
   //  TODO: is this copying necessary
-  cv::Mat final_field = big_height.clone();           // observed stay raw
-  working_mask |= changed_working_mask;
-  solver_field.copyTo(final_field, working_mask);     // only interior pixels get the PDE result
-  prev_fill_full_ = final_field;                      // cache for warm start next time
+  // cv::Mat final_field = big_height.clone();           // observed stay raw
+  // solver_field.copyTo(final_field, working_mask);     // only interior pixels get the PDE result
+  prev_fill_full_ = solver_field;                      // cache for warm start next time
 
-  PROFILE_SAVE_PNG(final_field, "final_field.png");
-  PROFILE_SAVE_PNG(working_mask * 255, "working_mask2.png");
-  PROFILE_SAVE_PNG(solver_field, "solver_field2.png");
+  PROFILE_SAVE_PNG(solver_field, "final_field" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(working_mask * 255, "working_mask2" + run_suffix + ".png");
+  // PROFILE_SAVE_PNG(solver_field, "solver_field2" + run_suffix + ".png");
 
   // ---------- Write back if the grid didn't shift while we solved ----------
   PROFILE_START(copy_to_ringbuffer);
@@ -507,7 +501,7 @@ void HeightMap::solveGlobalFill_()
     const size_t N = static_cast<size_t>(Hb_) * static_cast<size_t>(Wb_);
     if (filled_b_.size() != N) filled_b_.assign(N, static_cast<float>(max_h_ + robot_z_));
     for (int i = 0; i < Hb_; ++i) {
-      const float* row = final_field.ptr<float>(i);
+      const float* row = solver_field.ptr<float>(i);
       for (int j = 0; j < Wb_; ++j) {
         filled_b_[idxRB(i, j)] = row[j];  // map to current ring-buffer storage
       }
@@ -521,6 +515,31 @@ void HeightMap::solveGlobalFill_()
 
 void HeightMap::ingestPoints(const std::vector<Point3f>& pts) {
   if (!have_origin_) return;
+
+  static int run_counter = 0;
+  const std::string run_suffix = "_" + std::to_string(run_counter++);
+
+  // TODO: Debugging
+  cv::Mat bh(Hb_, Wb_, CV_32FC1);
+  cv::Mat bk(Hb_, Wb_, CV_32FC1); // delta-connected max
+  cv::Mat bo(Hb_, Wb_, CV_8UC1);       // 1=occluded, 0=observed
+  {
+    std::lock_guard<std::mutex> lk(m_);
+    for (int i = 0; i < Hb_; ++i) {
+      float*  h_row  = bh.ptr<float>(i);
+      float*  k_row  = bk.ptr<float>(i);
+      uint8_t* o_row = bo.ptr<uint8_t>(i);
+      for (int j = 0; j < Wb_; ++j) {
+        const size_t id = idxRB(i, j);
+        h_row[j]  = height_b_[id];
+        k_row[j]  = known_b_[id];
+        o_row[j]  = occ_b_[id];
+      }
+    }
+  }
+  PROFILE_SAVE_PNG(bo, "pre_ingest_occ" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(bh, "pre_ingest_h" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(bk, "pre_ingest_known" + run_suffix + ".png");
 
   // Reset per-scan min buckets
   const size_t Nb = static_cast<size_t>(Wb_) * static_cast<size_t>(Hb_);
@@ -548,7 +567,6 @@ void HeightMap::ingestPoints(const std::vector<Point3f>& pts) {
   // Fuse per-scan min into height & masks (lock during write)
   const float tnow = 0.0f;
   {
-    std::lock_guard<std::mutex> lk(m_);
     for (int i = 0; i < Hb_; ++i) {
       for (int j = 0; j < Wb_; ++j) {
         const size_t id = idxRB(i,j);
@@ -568,6 +586,24 @@ void HeightMap::ingestPoints(const std::vector<Point3f>& pts) {
         }
       }
     }
+
+    // TODO: Debugging
+  {
+    for (int i = 0; i < Hb_; ++i) {
+      float*  h_row  = bh.ptr<float>(i);
+      float*  k_row  = bk.ptr<float>(i);
+      uint8_t* o_row = bo.ptr<uint8_t>(i);
+      for (int j = 0; j < Wb_; ++j) {
+        const size_t id = idxRB(i, j);
+        h_row[j]  = height_b_[id];
+        k_row[j]  = known_b_[id];
+        o_row[j]  = occ_b_[id];
+      }
+    }
+  }
+  PROFILE_SAVE_PNG(bo, "post_ingest_occ" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(bh, "post_ingest_h" + run_suffix + ".png");
+  PROFILE_SAVE_PNG(bk, "post_ingest_known" + run_suffix + ".png");
   } // lock released
   //TODO: is this more efficient than locking per-cell inside the loop? And doing all updates in one pass?
 

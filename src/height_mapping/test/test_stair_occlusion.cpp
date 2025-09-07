@@ -10,41 +10,46 @@ int main() {
   height_mapping::HeightMap map(P);
 
   // Robot at origin; ensure origin and insert a little ramp + step
-  float robot_x = 0.0; float robot_y = 0.0; float robot_z = 0.0; float robot_yaw = 0.0;
-  map.ensureOrigin(robot_x, robot_y, robot_z);
+  float robot_x = 1.0; float robot_y = 0.0; float robot_z = 0.0; float robot_yaw = 0.0;
+  map.ensureOrigin(0.0, 0.0, 0.0);
+  map.recenterIfNeeded(robot_x, robot_y, robot_z);
+
   std::vector<height_mapping::Point3f> pts;
   float max_x = -1000.0f, min_x = 1000.0f;
   float max_y = -1000.0f, min_y = 1000.0f;
-  for (int k = 0; k < 200000; ++k) {
-    float x = 10.0f*(float(rand())/RAND_MAX - 0.5);
-    float y = 10.0f*(float(rand())/RAND_MAX - 0.5);
-    float z = 0.5f * x;               // shallow slope
-    // if (x > 1.0f && x < 1.2f) z -= 0.5f;     // small “step down”
-    if (abs(x) < 2.2f && y < 1.2f && y > 0.8f) {
-      if (!(abs(x) < 2.1f && y < 1.1f & y > 0.9f)) {
-        for (float j = 0.0f; j <= 1.0001f; j += 0.01f) {
-          pts.push_back({x, y, z * j + (1 - j) * 1.0f}); // vertical pole
-        }
+
+  for (float r = -10.0; r <= 10.0; r += 0.01) {
+      for (float c = -10.0; c < 10.0; c += 0.01) {
+        float x = r;
+        float y = c;
+        float z = 0.5f * x;               // shallow slope
+        // if (abs(x) < 2.2f && y < 1.2f && y > 0.8f) {
+        //   if (!(abs(x) < 2.1f && y < 1.1f & y > 0.9f)) {
+        //     for (float j = 0.0f; j <= 1.0001f; j += 0.01f) {
+        //       pts.push_back({x, y, z * j + (1 - j) * 1.0f}); // vertical pole
+        //     }
+        //   }
+        // } else if (abs(x) < 3.0f && abs(y) < 2.0f) {
+        //   if (static_cast<int>(std::floor(x / 0.5f)) % 2 == 0) {
+        //     float height = std::floor(x) * 0.5f;
+        //     pts.push_back({x,y,height});
+        //   }
+        // } else if (abs(x) > 3.0f) {
+        //   float height = (x > 0) ? 3.0f * 0.5f : -3.0f * 0.5f;
+        //   pts.push_back({x,y,height});
+        // } else {
+        //   pts.push_back({x,y,z});
+        // }
+        if (abs(x) > 0.5 || abs(y) > 0.5) pts.push_back({x,y,z});
+
+        if (x > max_x) max_x = x;
+        if (x < min_x) min_x = x;
+        if (y > max_y) max_y = y;
+        if (y < min_y) min_y = y;
       }
-    } else if (abs(x) < 3.0f && abs(y) < 2.0f) {
-      if (static_cast<int>(std::floor(x / 0.5f)) % 2 == 0) {
-        float height = std::floor(x) * 0.5f;
-        pts.push_back({x,y,height});
-      }
-    } else if (abs(x) > 3.0f) {
-      float height = (x > 0) ? 3.0f * 0.5f : -3.0f * 0.5f;
-      pts.push_back({x,y,height});
-    } else {
-      pts.push_back({x,y,z});
     }
-
-    if (x > max_x) max_x = x;
-    if (x < min_x) min_x = x;
-    if (y > max_y) max_y = y;
-    if (y < min_y) min_y = y;
-  }
   map.ingestPoints(pts);
-
+  
   // Query subgrid at robot (0,0,0 yaw)
   cv::Mat raw, filled;
   height_mapping::SubgridMeta meta;
