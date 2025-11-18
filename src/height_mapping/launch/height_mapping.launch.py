@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 
+from launch_ros.actions import Node
 from launch import LaunchDescription
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
 from launch.actions import IncludeLaunchDescription, LogInfo
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch_ros.actions import Node
-from launch.substitutions import FindExecutable, PathJoinSubstitution
-from launch_ros.substitutions import FindPackageShare
+
 
 def generate_launch_description():
-    
     # Include the fast_lio_vel mapping launch file
     fast_lio_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
@@ -22,7 +22,7 @@ def generate_launch_description():
             'use_sim_time': 'true'
         }.items()
     )
-    
+
     # Height mapping node with parameters
     height_mapping_node = Node(
         package='height_mapping',
@@ -35,17 +35,17 @@ def generate_launch_description():
             'topic_cloud': '/cloud_registered',
             'livox_frame': '',
             'resolution': 0.2,
-            'big_width': 100,
-            'big_height': 100,
+            'big_width': 50,
+            'big_height': 50,
             'max_height': 2.0,
             'z_min': -20.0,
             'z_max': 20.0,
             'drop_thresh': 0.07,
             'min_support': 2,
             'shift_thresh_m': 0.5,
-            'sub_width': 200,
-            'sub_height': 200,
-            'sub_resolution': 0.05,
+            'sub_width': 11,
+            'sub_height': 11,
+            'sub_resolution': 0.1,
             'publish_rate_hz': 10.0,
             'voxel_downsample': False,
             'voxel_leaf': 0.05,

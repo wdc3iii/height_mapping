@@ -33,7 +33,7 @@ struct Params {
   int    Wq = 200, Hq = 200;
   double res_q = 0.05;
 
-  // --- NEW: histogram / connectivity settings ---
+  // --- histogram / connectivity settings ---
   double z_hist_bin = 0.02;      // bin size [m], choose <= δ/2
   double z_connect_delta = 0.05; // δ: tolerate gaps up to this [m]
   int    z_bin_min_count = 2;    // min bin occupancy to count as "present"
