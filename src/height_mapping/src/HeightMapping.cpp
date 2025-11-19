@@ -140,16 +140,22 @@ void HeightMap::reset() {
 
 void HeightMap::ensureOrigin(double robot_x, double robot_y, double robot_z) {
   if (have_origin_) return;
+
+  std::lock_guard<std::mutex> lk(m_);
+
+  // Double-check after acquiring lock (another thread may have set it)
+  if (have_origin_) return;
+
   origin_x_ = robot_x - 0.5 * Wb_ * res_;
   origin_y_ = robot_y - 0.5 * Hb_ * res_;
   robot_z_ = robot_z;
-  
+
   // Initialize histogram bounds around robot z position
   const double hist_range = B_ * bin_size_;
   hist_z_center_ = robot_z;
   hist_z_min_    = robot_z - hist_range / 2.0;
   hist_z_max_    = robot_z + hist_range / 2.0;
-  
+
   have_origin_ = true;
 }
 
@@ -205,32 +211,56 @@ void HeightMap::shiftRingBuffer_(int si, int sj) {
 
 void HeightMap::recenterIfNeeded(double robot_x, double robot_y, double robot_z) {
   if (!have_origin_) return;
-  
-  // Check x,y recentering
-  const double cx = origin_x_ + 0.5 * Wb_ * res_;
-  const double cy = origin_y_ + 0.5 * Hb_ * res_;
-  const double dx = robot_x - cx;
-  const double dy = robot_y - cy;
-  bool need_xy_shift = (std::abs(dx) >= shift_thresh_ || std::abs(dy) >= shift_thresh_);
-  
-  // Check z recentering
-  const double dz = robot_z - hist_z_center_;
-  bool need_z_shift = (std::abs(dz) >= z_shift_thresh_);
-  
-  robot_z_ = robot_z;
-  
+
+  // Determine what needs to be done (read-only operations, need lock)
+  bool need_xy_shift, need_z_shift;
+  int si = 0, sj = 0;
+  double new_origin_x, new_origin_y;
+
+  {
+    std::lock_guard<std::mutex> lk(m_);
+
+    // Check x,y recentering
+    const double cx = origin_x_ + 0.5 * Wb_ * res_;
+    const double cy = origin_y_ + 0.5 * Hb_ * res_;
+    const double dx = robot_x - cx;
+    const double dy = robot_y - cy;
+    need_xy_shift = (std::abs(dx) >= shift_thresh_ || std::abs(dy) >= shift_thresh_);
+
+    // Check z recentering
+    const double dz = robot_z - hist_z_center_;
+    need_z_shift = (std::abs(dz) >= z_shift_thresh_);
+
+    // Update robot_z regardless
+    robot_z_ = robot_z;
+
+    // Calculate shift parameters while holding lock
+    if (need_xy_shift) {
+      sj = static_cast<int>(dx / res_);
+      si = static_cast<int>(dy / res_);
+      if (si != 0 || sj != 0) {
+        new_origin_x = origin_x_ + sj * res_;
+        new_origin_y = origin_y_ + si * res_;
+      } else {
+        need_xy_shift = false;  // No actual shift needed
+      }
+    }
+  }
+  // Lock released here
+
+  // Perform shifts (these lock internally)
   if (need_z_shift) {
     recenterHistogramBounds_(robot_z);
   }
-  
+
   if (need_xy_shift) {
-    const int sj = static_cast<int>(dx / res_);   //casting as int truncates towards zero
-    const int si = static_cast<int>(dy / res_);
-    if (si != 0 || sj != 0) {
-      origin_x_ += sj * res_;
-      origin_y_ += si * res_;
-      shiftRingBuffer_(-si, -sj);
+    // Update origin and shift buffer (shiftRingBuffer_ locks internally)
+    {
+      std::lock_guard<std::mutex> lk(m_);
+      origin_x_ = new_origin_x;
+      origin_y_ = new_origin_y;
     }
+    shiftRingBuffer_(-si, -sj);
   }
 }
 

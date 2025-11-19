@@ -2,6 +2,7 @@
 #include <vector>
 #include <cstdint>
 #include <mutex>
+#include <atomic>
 #include <limits>
 #include <cmath>
 #include <opencv2/core.hpp>
@@ -120,7 +121,7 @@ private:
   std::vector<float>   stamp_b_;
   int start_i_{0}, start_j_{0};
   double origin_x_{0.0}, origin_y_{0.0}, robot_z_{0.0};
-  bool have_origin_{false};
+  std::atomic<bool> have_origin_{false};
 
   // NEW: per-cell z-aggregator + cached boundary-connected height
   std::vector<ZAgg>  zagg_b_;   // size Wb*Hb

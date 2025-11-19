@@ -51,6 +51,10 @@ public:
 
     mapper_ = std::make_shared<height_mapping::HeightMap>(P);
 
+    // Create callback groups for multi-threaded execution
+    subscriber_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    timer_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
     // pubs/subs
     pub_raw_  = create_publisher<sensor_msgs::msg::PointCloud2>("height_grid/pub_raw", 1);
     pub_fill_ = create_publisher<sensor_msgs::msg::PointCloud2>("height_grid/pub_filled", 1);
@@ -58,15 +62,24 @@ public:
     enable_pub_big_ = declare_parameter<bool>("enable_pub_big", false);
     enable_pub_raw_ = declare_parameter<bool>("enable_pub_raw", true);
 
+    // Subscription options with dedicated callback group
+    auto sub_options = rclcpp::SubscriptionOptions();
+    sub_options.callback_group = subscriber_cb_group_;
+
     sub_cloud_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       topic_cloud_, rclcpp::SensorDataQoS(),
-      std::bind(&HeightMapNode::cloudCb, this, std::placeholders::_1));
+      std::bind(&HeightMapNode::cloudCb, this, std::placeholders::_1),
+      sub_options);
 
-    // timer
+    // timer with dedicated callback group
+    // Use rclcpp::create_timer to respect sim time for bag playback
     const auto period = std::chrono::duration<double>(1.0 / publish_rate_);
-    timer_ = create_wall_timer(
-        std::chrono::duration_cast<std::chrono::milliseconds>(period),
-        std::bind(&HeightMapNode::onPublish, this));
+    timer_ = rclcpp::create_timer(
+        this,
+        this->get_clock(),
+        rclcpp::Duration::from_seconds(1.0 / publish_rate_),
+        std::bind(&HeightMapNode::onPublish, this),
+        timer_cb_group_);
 
     RCLCPP_INFO(get_logger(), "height_mapping node up: big %dx%d @%.2f, sub %dx%d @%.2f",
                 P.Wb, P.Hb, P.res, P.Wq, P.Hq, P.res_q);
@@ -206,9 +219,9 @@ private:
 
   bool getRobotPose(const rclcpp::Time& t, double& x, double& y, double& z, double& yaw) {
     try {
-      RCLCPP_DEBUG(get_logger(), "Attempting TF lookup: %s -> %s", map_frame_.c_str(), base_frame_.c_str());
+      // RCLCPP_DEBUG(get_logger(), "Attempting TF lookup: %s -> %s", map_frame_.c_str(), base_frame_.c_str());
       // Try with exact timestamp first
-      auto T = tf_buffer_.lookupTransform(map_frame_, base_frame_, t, tf2::durationFromSec(0.2));
+      auto T = tf_buffer_.lookupTransform(map_frame_, base_frame_, t, tf2::durationFromSec(0.1));
       x = T.transform.translation.x;
       y = T.transform.translation.y;
       z = T.transform.translation.z;
@@ -216,7 +229,7 @@ private:
       tf2::Quaternion qq(q.x, q.y, q.z, q.w);
       tf2::Matrix3x3 R(qq);
       double roll, pitch; R.getRPY(roll, pitch, yaw);
-      RCLCPP_DEBUG(get_logger(), "TF lookup success: pose (%.2f, %.2f, %.2f, %.2f)", x, y, z, yaw);
+      // RCLCPP_DEBUG(get_logger(), "TF lookup success: pose (%.2f, %.2f, %.2f, %.2f)", x, y, z, yaw);
       return true;
     } catch (const tf2::ExtrapolationException& e) {
       // If extrapolation fails, try with latest available transform
@@ -245,14 +258,14 @@ private:
   void cloudCb(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 2000, "Received point cloud with %d points", 
                          msg->width * msg->height);
-    
+    auto t0 = now();
     // TF: ensure origin & recenter
     double rx, ry, rz, rYaw;
     if (!getRobotPose(msg->header.stamp, rx, ry, rz, rYaw)) {
       RCLCPP_DEBUG(get_logger(), "Skipping cloud processing - no robot pose");
       return;
     }
-    RCLCPP_DEBUG(get_logger(), "Processing cloud at robot pose (%.2f, %.2f, %.2f, %.2f)", rx, ry, rz, rYaw);
+    // RCLCPP_DEBUG(get_logger(), "Processing cloud at robot pose (%.2f, %.2f, %.2f, %.2f)", rx, ry, rz, rYaw);
     
     mapper_->ensureOrigin(rx, ry, rz);
     mapper_->recenterIfNeeded(rx, ry, rz);
@@ -324,17 +337,18 @@ private:
       pts.push_back(height_mapping::Point3f{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
     }
 
-    RCLCPP_DEBUG(get_logger(), "Ingesting %zu points into height map", pts.size());
     mapper_->ingestPoints(pts);
-    RCLCPP_DEBUG(get_logger(), "Point ingestion completed");
+    RCLCPP_DEBUG(get_logger(), "Ingesting %zu points completed in %0.6f ms", pts.size(), (now() - t0).seconds() * 1000.0);
   }
 
   void onPublish() {
     RCLCPP_DEBUG(get_logger(), "Publish timer callback triggered");
-    
-    // Pose at publish time
+    auto t0 = now();
+
+    // Pose at publish time - use latest available transform (Time(0))
+    // This avoids extrapolation issues when timer drifts ahead of data
     double rx, ry, rz, rYaw;
-    if (!getRobotPose(now(), rx, ry, rz, rYaw)) {
+    if (!getRobotPose(rclcpp::Time(0), rx, ry, rz, rYaw)) {
       RCLCPP_INFO(get_logger(), "Skipping publish - no robot pose");
       return;
     }
@@ -343,11 +357,11 @@ private:
       return;
     }
 
-    RCLCPP_DEBUG(get_logger(), "Generating subgrid at pose (%.2f, %.2f, %.2f, %.2f)", rx, ry, rz, rYaw);
+    // RCLCPP_DEBUG(get_logger(), "Generating subgrid at pose (%.2f, %.2f, %.2f, %.2f)", rx, ry, rz, rYaw);
     cv::Mat pub_raw_map, pub_filled_map;
     height_mapping::SubgridMeta meta;
     mapper_->generateSubgrid(rx, ry, rYaw, pub_raw_map, pub_filled_map, meta);
-    RCLCPP_DEBUG(get_logger(), "Subgrid generated: %dx%d", meta.width, meta.height);
+    // RCLCPP_DEBUG(get_logger(), "Subgrid generated: %dx%d", meta.width, meta.height);
 
     // Publish height point clouds
     auto stamp = now();
@@ -357,7 +371,7 @@ private:
     if (enable_pub_raw_) {
       pub_raw_->publish(*createPointCloud(pub_raw_map, meta, stamp));
     }
-    
+
     // Publish big map point cloud with its own metadata
     if (enable_pub_big_) {
       cv::Mat pub_big_map, tmp1, tmp2;
@@ -365,7 +379,9 @@ private:
       mapper_->snapshotBig(pub_big_map, tmp1, tmp2);
       pub_big_->publish(*createPointCloud(pub_big_map, big_meta, stamp));
     }
-    RCLCPP_DEBUG(get_logger(), "Published height maps and metadata");
+
+    double elapsed_ms = (now() - t0).seconds() * 1000.0;
+    RCLCPP_DEBUG(get_logger(), "Published height maps in %.6f ms", elapsed_ms);
   }
 
 private:
@@ -381,6 +397,10 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_raw_, pub_fill_, pub_big_;
   rclcpp::TimerBase::SharedPtr timer_;
 
+  // Callback groups for multi-threaded execution
+  rclcpp::CallbackGroup::SharedPtr subscriber_cb_group_;
+  rclcpp::CallbackGroup::SharedPtr timer_cb_group_;
+
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
 
@@ -390,7 +410,18 @@ private:
 
 int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<HeightMapNode>());
+
+  // Create node
+  auto node = std::make_shared<HeightMapNode>();
+
+  // Create multi-threaded executor with 2 threads
+  // This allows subscriber and timer callbacks to run concurrently
+  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 2);
+  executor.add_node(node);
+
+  RCLCPP_INFO(node->get_logger(), "Starting multi-threaded executor with 2 threads");
+  executor.spin();
+
   rclcpp::shutdown();
   return 0;
 }
