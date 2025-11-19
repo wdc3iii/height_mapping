@@ -78,10 +78,10 @@ sudo apt-get install -y \
     ros-humble-rosidl-generator-cpp \
     ros-humble-rosidl-default-generators \
     ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-rviz2
     ros-humble-rviz-visual-tools \
     ros-humble-foxglove-bridge \
     ros-humble-joy              # Need to make sure this is version 3.3.0
-RUN source /opt/ros/humble/setup.bash
 
 # python deps
 RUN pip install -U \
@@ -129,7 +129,7 @@ WORKDIR /home/${USER}
 
 # [4] some useful aliases
 RUN cat << 'EOF' >> /home/${USER}/.bashrc
-    alias height_mapping='source /opt/ros/humble/setup.bash && source ~/ws_livox/install/setup.bash && source ~/repos/ws_height_mapping/install/setup.bash'
-    alias livox='source /opt/ros/humble/setup.bash && source ~/ws_livox/install/setup.bash'
+alias height_mapping='source /opt/ros/humble/setup.bash && source ~/ws_livox/install/setup.bash && source ~/repos/ws_height_mapping/install/setup.bash'
+alias livox='source /opt/ros/humble/setup.bash && source ~/ws_livox/install/setup.bash'
 EOF
 
