@@ -53,10 +53,11 @@ install(TARGETS height_mapping_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
+install(DIRECTORY rviz/ DESTINATION share/${PROJECT_NAME}/rviz)
 
 ament_package()
 
-option(BUILD_TESTS "Build test executables" ON)
+option(BUILD_TESTS "Build test executables" OFF)
 
 if(BUILD_TESTS)
   add_executable(test_pole_occlusion test/test_pole_occlusion.cpp)

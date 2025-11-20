@@ -1,17 +1,18 @@
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
-#include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 
 #include <opencv2/core.hpp>
 
-#include <pcl/filters/voxel_grid.h>
 #include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
 #include <pcl_conversions/pcl_conversions.h>
 
 #include "HeightMapping.hpp"
@@ -59,8 +60,10 @@ public:
     pub_raw_  = create_publisher<sensor_msgs::msg::PointCloud2>("height_grid/pub_raw", 1);
     pub_fill_ = create_publisher<sensor_msgs::msg::PointCloud2>("height_grid/pub_filled", 1);
     pub_big_ = create_publisher<sensor_msgs::msg::PointCloud2>("height_grid/pub_big", 1);
+    pub_hm_  = create_publisher<sensor_msgs::msg::Image>("height_grid/height_map", 1);
     enable_pub_big_ = declare_parameter<bool>("enable_pub_big", false);
-    enable_pub_raw_ = declare_parameter<bool>("enable_pub_raw", true);
+    enable_pub_raw_ = declare_parameter<bool>("enable_pub_raw", false);
+    enable_pub_fill_ = declare_parameter<bool>("enable_pub_fill", true);
 
     // Subscription options with dedicated callback group
     auto sub_options = rclcpp::SubscriptionOptions();
@@ -341,6 +344,49 @@ private:
     RCLCPP_DEBUG(get_logger(), "Ingesting %zu points completed in %0.6f ms", pts.size(), (now() - t0).seconds() * 1000.0);
   }
 
+  void fillHeightImageMsg(const cv::Mat& map,
+                        float rz,
+                        const rclcpp::Time& stamp,
+                        const std::string& frame_id,
+                        sensor_msgs::msg::Image& msg)
+  {
+    using sensor_msgs::msg::Image;
+
+    if (map.type() != CV_32FC1) {
+      throw std::runtime_error("fillHeightImageMsg: map must be CV_32FC1");
+    }
+
+    msg.header.stamp = stamp;
+    msg.header.frame_id = frame_id;
+
+    msg.height = map.rows;
+    msg.width  = map.cols;
+    msg.encoding = "32FC1";   // 1-channel float32
+    msg.is_bigendian = false;
+    msg.step = msg.width * sizeof(float);
+
+    msg.data.resize(msg.height * msg.step);
+    float* dst = reinterpret_cast<float*>(msg.data.data());
+
+    // if (map.isContinuous()) {
+    //   const float* src = map.ptr<float>(0);
+    //   int N = map.rows * map.cols;
+    //   for (int i = 0; i < N; ++i) {
+    //     dst[i] = rz - src[i];  // h = rz - map
+    //     RCLCPP_INFO(get_logger(), "%0.4f, %0.4f, %0.4f", dst[i], rz, src[i]);
+    //   }
+    // } else {
+    int idx = 0;
+    for (int r = 0; r < map.rows; ++r) {
+      const float* row = map.ptr<float>(r);
+      for (int c = 0; c < map.cols; ++c, ++idx) {
+        dst[idx] = rz - row[c];
+        RCLCPP_INFO(get_logger(), "%0.4f, %0.4f, %0.4f", dst[idx], rz, row[c]);
+      }
+    }
+    // }
+  }
+
   void onPublish() {
     RCLCPP_DEBUG(get_logger(), "Publish timer callback triggered");
     auto t0 = now();
@@ -365,9 +411,15 @@ private:
 
     // Publish height point clouds
     auto stamp = now();
+    // Publish rz - pub_filled_map as a 2D array using pub_hm_
+    sensor_msgs::msg::Image img_msg;
+    fillHeightImageMsg(pub_filled_map, static_cast<float>(rz), stamp, base_frame_, img_msg);
+    pub_hm_->publish(img_msg);
 
     // Publish subgrid point clouds
-    pub_fill_->publish(*createPointCloud(pub_filled_map, meta, stamp));
+    if (enable_pub_fill_) {
+      pub_fill_->publish(*createPointCloud(pub_filled_map, meta, stamp));
+    }
     if (enable_pub_raw_) {
       pub_raw_->publish(*createPointCloud(pub_raw_map, meta, stamp));
     }
@@ -387,7 +439,7 @@ private:
 private:
   // ROS
   std::string map_frame_, base_frame_, topic_cloud_, lidar_frame_;
-  bool enable_pub_big_, enable_pub_raw_;
+  bool enable_pub_big_, enable_pub_raw_, enable_pub_fill_;
   double publish_rate_{10.0};
   bool use_voxel_ds_{false}, transform_cloud_if_needed_{true};
   double voxel_leaf_{0.05};
@@ -395,6 +447,7 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_raw_, pub_fill_, pub_big_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_hm_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   // Callback groups for multi-threaded execution

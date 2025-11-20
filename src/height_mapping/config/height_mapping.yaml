@@ -1,7 +1,7 @@
 height_map_node:
   ros__parameters:
     map_frame: odom
-    base_frame: body
+    base_frame: pelvis
     topic_cloud: /cloud_registered
     resolution: 0.05
     big_width: 200
@@ -26,3 +26,4 @@ height_map_node:
 
     enable_pub_big: true
     enable_pub_raw: false
+    enable_pub_fill: true

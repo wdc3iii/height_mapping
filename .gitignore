@@ -21,3 +21,6 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Did I use AI to help write this file?
+.claude/
