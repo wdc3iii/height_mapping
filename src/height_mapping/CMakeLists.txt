@@ -10,6 +10,12 @@ if(ENABLE_PROFILING)
   add_compile_definitions(HEIGHT_MAPPING_PROFILE)
 endif()
 
+# MuJoCo spoofing node option
+option(BUILD_MUJOCO_SPOOF_NODE "Build height mapping spoof node with MuJoCo raycasting" OFF)
+if(BUILD_MUJOCO_SPOOF_NODE)
+  message(STATUS "Building MuJoCo spoof node enabled")
+endif()
+
 find_package(ament_cmake REQUIRED)
 find_package(OpenCV REQUIRED)
 
@@ -48,12 +54,79 @@ if(PCL_DEFINITIONS)
   add_definitions(${PCL_DEFINITIONS})
 endif()
 
+# Conditionally build MuJoCo spoof node
+if(BUILD_MUJOCO_SPOOF_NODE)
+  find_package(ament_index_cpp REQUIRED)
+
+  # Try to find MuJoCo via find_package first
+  find_package(mujoco QUIET)
+
+  if(NOT mujoco_FOUND)
+    # Fall back to manual configuration for prebuilt binaries
+    message(STATUS "MuJoCo not found via find_package, using manual configuration")
+
+    # Try common installation paths
+    set(MUJOCO_SEARCH_PATHS
+      /usr/local/mujoco
+      $ENV{MUJOCO_DIR}
+      ${CMAKE_PREFIX_PATH}
+    )
+
+    find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h
+      PATHS ${MUJOCO_SEARCH_PATHS}
+      PATH_SUFFIXES include
+    )
+
+    find_library(MUJOCO_LIBRARY
+      NAMES mujoco
+      PATHS ${MUJOCO_SEARCH_PATHS}
+      PATH_SUFFIXES lib
+    )
+
+    if(NOT MUJOCO_INCLUDE_DIR OR NOT MUJOCO_LIBRARY)
+      message(FATAL_ERROR "MuJoCo not found. Please set MUJOCO_DIR environment variable or install MuJoCo to /usr/local/mujoco")
+    endif()
+
+    message(STATUS "Found MuJoCo: ${MUJOCO_LIBRARY}")
+    message(STATUS "MuJoCo include: ${MUJOCO_INCLUDE_DIR}")
+  endif()
+
+  add_executable(height_mapping_spoof_node src/HeightMappingSpoofNode.cpp)
+
+  target_include_directories(height_mapping_spoof_node PUBLIC
+    include
+    ${PCL_INCLUDE_DIRS}
+    ${MUJOCO_INCLUDE_DIR}
+  )
+
+  ament_target_dependencies(height_mapping_spoof_node
+    rclcpp
+    sensor_msgs
+    nav_msgs
+    tf2
+    tf2_ros
+    cv_bridge
+    pcl_conversions
+    ament_index_cpp
+  )
+
+  target_link_libraries(height_mapping_spoof_node
+    height_mapping_core
+    ${OpenCV_LIBS}
+    ${PCL_LIBRARIES}
+    ${MUJOCO_LIBRARY}
+  )
+
+  install(TARGETS height_mapping_spoof_node DESTINATION lib/${PROJECT_NAME})
+endif()
+
 install(TARGETS height_mapping_core DESTINATION lib)
 install(TARGETS height_mapping_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 install(DIRECTORY rviz/ DESTINATION share/${PROJECT_NAME}/rviz)
+install(DIRECTORY rsc/ DESTINATION share/${PROJECT_NAME}/rsc)
 
 ament_package()
 

@@ -1,0 +1,68 @@
+<mujoco model="stepping_stones">
+  <option gravity="0 0 -9.81"/>
+
+  <statistic center="1.0 0.7 1.0" extent="0.8"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0.9 0.9 0.9"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-140" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="flat" rgb1="0 0 0" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="box_material" shininess="0.1" specular="0.5" roughness="0.3"/>
+  </asset>
+
+  <worldbody>
+    <light pos="1 0 3.5" dir="0 0 -1" directional="true"/>
+
+    <!-- Ground plane at z = -2m -->
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" pos="0 0 -2" group="2"/>
+
+    <!-- Stepping stones: rectangles at z=0 (top surface)
+         - Width (x-direction): 0.2 m
+         - Gap between stones: 0.1 m
+         - Length (y-direction): 3.0 m (extending +/- 1.5m)
+         - Height (z-direction): 0.25 m (from 0 down to -0.25m)
+
+         Spacing: 0.2m stone + 0.1m gap = 0.3m per unit
+         First stone centered at (0, 0), then extending in +x direction
+    -->
+
+    <!-- Stone 0: centered at x=0, y=0 -->
+    <geom name="stone_0" type="box" pos="0.0 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 1: x = 0.3m -->
+    <geom name="stone_1" type="box" pos="0.3 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 2: x = 0.6m -->
+    <geom name="stone_2" type="box" pos="0.6 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 3: x = 0.9m -->
+    <geom name="stone_3" type="box" pos="0.9 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 4: x = 1.2m -->
+    <geom name="stone_4" type="box" pos="1.2 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 5: x = 1.5m -->
+    <geom name="stone_5" type="box" pos="1.5 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 6: x = 1.8m -->
+    <geom name="stone_6" type="box" pos="1.8 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 7: x = 2.1m -->
+    <geom name="stone_7" type="box" pos="2.1 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 8: x = 2.4m -->
+    <geom name="stone_8" type="box" pos="2.4 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 9: x = 2.7m -->
+    <geom name="stone_9" type="box" pos="2.7 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+
+    <!-- Stone 10: x = 3.0m -->
+    <geom name="stone_10" type="box" pos="3.0 0 -0.125" size="0.1 1.5 0.125" material="box_material" group="2"/>
+  </worldbody>
+</mujoco>

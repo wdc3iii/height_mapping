@@ -25,6 +25,15 @@ Then, in `~/repos/height_mapping` run `colcon build --symlink-install` to build 
 To integrate with a downstream project, simply submodule the main repository (this has not been tested yet...). Note dependencies on the [Livox SDK2](https://github.com/Livox-SDK/Livox-SDK2) and [livox_ros_driver2](https://github.com/Livox-SDK/livox_ros_driver2). 
 Additionally, note that the file `/src/fastlio_vel/config/livox_MID360_config.json` may need to be updated with the proper IP addresses for the Lidar (unless the robot is the Amber lab 'nice' Unitree G1). 
 
+### Heightmap spoofing
+
+To build with the option to spoof a heightmap by querying a mujoco file, compile the workspace using 
+
+```colcon build --symlink-install --cmake-args -DBUILD_MUJOCO_SPOOF_NODE=ON```
+
+Then to run the heightmap spoofing, run lidar, fast_lio_vel (for pose estimates) and the spoofed heightmap node.
+
+
 ## Running
 Currently, to run the heightmap, the Lidar must be launched first, then the height mapping launch file (these will be combined soon). To launch the lidar, run
 

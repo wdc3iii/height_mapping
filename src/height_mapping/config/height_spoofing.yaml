@@ -1,0 +1,37 @@
+height_map_node:
+  ros__parameters:
+    map_frame: odom
+    base_frame: pelvis
+    resolution: 0.05
+    big_width: 200
+    big_height: 200
+    shift_thresh_m: 2.5
+    max_height: 2.0
+    z_min: -4.0
+    z_max:  4.0
+    drop_thresh: 0.25
+    min_support: 2
+
+    sub_width: 11
+    sub_height: 11
+    sub_resolution: 0.1
+    subgrid_bilinear_interp: false
+    publish_rate_hz: 50.0
+
+    occluded_fraction_threshold: 0.5
+    voxel_downsample: false
+    voxel_leaf: 0.05
+    transform_cloud: false  # Not needed for spoof node (no real cloud)
+
+    enable_pub_big: true
+    enable_pub_raw: false
+    enable_pub_fill: true
+
+    # MuJoCo spoofing parameters
+    mujoco_xml_file: stepping_stones.xml
+    z_offset: 0.0
+
+    # MuJoCo scan parameters (finer discretization for raycasting)
+    scan_width: 150         # Number of rays in x direction
+    scan_height: 150        # Number of rays in y direction
+    scan_resolution: 0.01  # Resolution (meters per ray)
