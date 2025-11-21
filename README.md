@@ -23,7 +23,7 @@ Then, in `~/repos/height_mapping` run `colcon build --symlink-install` to build 
 
 ### Integration with downstream project
 To integrate with a downstream project, simply submodule the main repository (this has not been tested yet...). Note dependencies on the [Livox SDK2](https://github.com/Livox-SDK/Livox-SDK2) and [livox_ros_driver2](https://github.com/Livox-SDK/livox_ros_driver2). 
-Additionally, note that the config file `TODO` for the Livox SDK2 needs to be updated with proper host and lidar IP addresses (see section above for details). 
+Additionally, note that the file `/src/fastlio_vel/config/livox_MID360_config.json` may need to be updated with the proper IP addresses for the Lidar (unless the robot is the Amber lab 'nice' Unitree G1). 
 
 ## Running
 Currently, to run the heightmap, the Lidar must be launched first, then the height mapping launch file (these will be combined soon). To launch the lidar, run
