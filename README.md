@@ -13,14 +13,11 @@ The `docker` branch of this repository maintains a docker image which can be use
 
 ### Heightmap only
 To run only the heightmap, this code can be cloned (be sure to run `git submodule update --init --recursive` to pull the submoduled FAST-LIO fork); create an environment variable `$HEIGHT_MAPPING_ROOT=<path-to-repo>`.
-Additionally, the installed livox drivers need to be updated with the proper ip addresses for the lidar unit in the file `TODO`. For the 'nice' G1 in Amber lab, this is:
-
-```TODO```
-
-Which comes pre-set on the docker image. If using a different lidar, the IP addresses of the host and the lidar need to be set appropriately. 
+If using the 'nice' G1 in Amber lab, the configuration for the lidar is found in `/src/fastlio_vel/config/livox_MID360_config.json`. 
+If using a different lidar, the IP addresses of the host and the lidar need to be set appropriately in this file. 
 Then, build docker image. To install terminal aliases, run `source scripts/setup_aliases.bash`. Using the installed terminal aliases, run `livox`, which performs:
 
-```source /opt/ros/humble/setup.bash && source /ws_livox/install/setup.bash```
+```source /opt/ros/humble/setup.bash && source ~/ws_livox/install/setup.bash```
 
 Then, in `~/repos/height_mapping` run `colcon build --symlink-install` to build both the FAST-LIO fork and `height_mapping`. Finally, run `source install/setup.bash` from `$HEIGHT_MAPPING_ROOT` to source the install, or use the alias `height_mapping`. 
 
@@ -31,7 +28,7 @@ Additionally, note that the config file `TODO` for the Livox SDK2 needs to be up
 ## Running
 Currently, to run the heightmap, the Lidar must be launched first, then the height mapping launch file (these will be combined soon). To launch the lidar, run
 
-```ros2 launch livox_ros_driver2 ...```
+```ros2 launch fast_lio_vel livox.launch.py```
 
 And then to run the height mapping code:
 

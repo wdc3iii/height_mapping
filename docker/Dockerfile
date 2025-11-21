@@ -78,7 +78,7 @@ sudo apt-get install -y \
     ros-humble-rosidl-generator-cpp \
     ros-humble-rosidl-default-generators \
     ros-humble-rmw-cyclonedds-cpp \
-    ros-humble-rviz2
+    ros-humble-rviz2 \
     ros-humble-rviz-visual-tools \
     ros-humble-foxglove-bridge \
     ros-humble-joy              # Need to make sure this is version 3.3.0
@@ -124,12 +124,9 @@ RUN mkdir -p ws_livox/src \
     && cd ws_livox/src \
     && git clone https://github.com/Livox-SDK/livox_ros_driver2.git
 WORKDIR /home/${USER}/ws_livox/src/livox_ros_driver2
+# RUN sed -i \
+#     -e 's/192\.168\.1\.5/192.168.123.222/g' \
+#     -e 's/192\.168\.1\.12/192.168.123.120/g' \
+#     config/MID360_config.json
 RUN bash -lc "source /opt/ros/humble/setup.bash && ./build.sh humble"
 WORKDIR /home/${USER}
-
-# [4] some useful aliases
-RUN cat << 'EOF' >> /home/${USER}/.bashrc
-alias height_mapping='source /opt/ros/humble/setup.bash && source ~/ws_livox/install/setup.bash && source ~/repos/ws_height_mapping/install/setup.bash'
-alias livox='source /opt/ros/humble/setup.bash && source ~/ws_livox/install/setup.bash'
-EOF
-
