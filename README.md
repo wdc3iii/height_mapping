@@ -47,3 +47,9 @@ Where `use_sim_time` should be included, as true, if running the height mapping 
 
 The launch file launches a height mapping node with parameters in `$HEIGHT_MAPPING_ROOT/src/height_mapping/config/height_mapping.yaml`, and FAST-LIO gets launch with parameters in `$HEIGHT_MAPPING_ROOT/src/fastlio_vel/config/mid360_g1.yaml`.
 
+Similarly, to run the heightmap spoofing code, run:
+
+```ros2 launch height_mapping height_spoof.launch.py --use_sim_time:=<bool> --rviz:=<bool>```
+
+This will load the `.xml` file in `rsc` folder into Mujoco to use for raycasting.
+
