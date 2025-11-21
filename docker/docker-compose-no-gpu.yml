@@ -8,6 +8,7 @@ services:
         UID: $UID
         GID: $UID
         HEIGHT_MAPPING_ROOT: $HEIGHT_MAPPING_ROOT
+        INSTALL_MUJOCO: true
       dockerfile: Dockerfile
     network_mode: host
     ipc: host

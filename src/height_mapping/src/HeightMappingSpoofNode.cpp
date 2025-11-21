@@ -5,15 +5,17 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
-#include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_ros/transform_listener.h>
 
 #include <opencv2/core.hpp>
 
 #include <pcl/point_types.h>
+#include <pcl/ModelCoefficients.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <pcl/segmentation/sac_segmentation.h>
 
 #include <mujoco/mujoco.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
@@ -75,9 +77,20 @@ public:
     pub_fill_ = create_publisher<sensor_msgs::msg::PointCloud2>("height_grid/pub_filled", 1);
     pub_big_ = create_publisher<sensor_msgs::msg::PointCloud2>("height_grid/pub_big", 1);
     pub_hm_  = create_publisher<sensor_msgs::msg::Image>("height_grid/height_map", 1);
+    pub_ground_inliers_ = create_publisher<sensor_msgs::msg::PointCloud2>("ground_plane/inliers", 1);
     enable_pub_big_ = declare_parameter<bool>("enable_pub_big", false);
     enable_pub_raw_ = declare_parameter<bool>("enable_pub_raw", false);
     enable_pub_fill_ = declare_parameter<bool>("enable_pub_fill", true);
+
+    // Subscribe to LiDAR cloud for initial ground-plane estimation
+    rclcpp::SubscriptionOptions sub_options;
+    sub_options.callback_group = subscriber_cb_group_;
+
+    sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+      topic_cloud_,
+      rclcpp::SensorDataQoS(),
+      std::bind(&HeightMapSpoofNode::onFirstCloud, this, std::placeholders::_1),
+      sub_options);
 
     // Raycast timer with dedicated callback group (runs in separate thread)
     // This generates the synthetic point cloud via MuJoCo raycasting
@@ -514,6 +527,182 @@ private:
     RCLCPP_DEBUG(get_logger(), "Published height maps in %.6f ms", elapsed_ms);
   }
 
+  void onFirstCloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  {
+    if (have_ground_plane_) {
+      return;
+    }
+
+    // --- 1. Figure out source frame and lookup TF map <- src ---
+    geometry_msgs::msg::TransformStamped T_map_src;
+    bool do_tf = false;
+
+    const std::string src_frame =
+        msg->header.frame_id.empty() ? lidar_frame_ : msg->header.frame_id;
+
+    if (transform_cloud_if_needed_ && !src_frame.empty() && src_frame != map_frame_) {
+      try {
+        T_map_src = tf_buffer_.lookupTransform(
+            map_frame_, src_frame, msg->header.stamp, tf2::durationFromSec(0.1));
+        do_tf = true;
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(get_logger(),
+                    "Ground plane: TF missing %s->%s: %s",
+                    map_frame_.c_str(), src_frame.c_str(), e.what());
+        return;
+      }
+    }
+
+    // --- 2. Build rotation + translation (map <- src) ---
+    double r00 = 1, r01 = 0, r02 = 0, tx = 0;
+    double r10 = 0, r11 = 1, r12 = 0, ty = 0;
+    double r20 = 0, r21 = 0, r22 = 1, tz = 0;
+
+    if (do_tf) {
+      const auto &t = T_map_src.transform.translation;
+      const auto &q = T_map_src.transform.rotation;
+      tf2::Quaternion qq(q.x, q.y, q.z, q.w);
+      tf2::Matrix3x3 R(qq);
+      r00 = R[0][0]; r01 = R[0][1]; r02 = R[0][2]; tx = t.x;
+      r10 = R[1][0]; r11 = R[1][1]; r12 = R[1][2]; ty = t.y;
+      r20 = R[2][0]; r21 = R[2][1]; r22 = R[2][2]; tz = t.z;
+    }
+
+    // --- 3. Iterate PointCloud2, transform to map frame, keep z <= 0 ---
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    cloud->reserve(msg->width * msg->height);
+
+    sensor_msgs::PointCloud2ConstIterator<float> it_x(*msg, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> it_y(*msg, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> it_z(*msg, "z");
+
+    for (; it_x != it_x.end(); ++it_x, ++it_y, ++it_z) {
+      double x = *it_x;
+      double y = *it_y;
+      double z = *it_z;
+
+      if (do_tf) {
+        const double xx = r00 * x + r01 * y + r02 * z + tx;
+        const double yy = r10 * x + r11 * y + r12 * z + ty;
+        const double zz = r20 * x + r21 * y + r22 * z + tz;
+        x = xx; y = yy; z = zz;
+      }
+
+      // Reject points above z = 0 in odom/map frame
+      if (z <= -0.5 && std::sqrt(x*x + y*y) < 2.0) {  // also limit to 3m radius
+        cloud->push_back(pcl::PointXYZ(
+            static_cast<float>(x),
+            static_cast<float>(y),
+            static_cast<float>(z)));
+      }
+    }
+
+    cloud->width = cloud->size();
+    cloud->height = 1;
+    cloud->is_dense = false;
+
+    if (cloud->empty()) {
+      RCLCPP_WARN(get_logger(),
+                  "Ground plane: no points left after TF + z<=0 filtering.");
+      return;
+    }
+
+    // --- 4. Optional voxel downsample before RANSAC ---
+    if (use_voxel_ds_) {
+      pcl::VoxelGrid<pcl::PointXYZ> vg;
+      vg.setInputCloud(cloud);
+      vg.setLeafSize(voxel_leaf_, voxel_leaf_, voxel_leaf_);
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ds(new pcl::PointCloud<pcl::PointXYZ>);
+      vg.filter(*cloud_ds);
+      cloud = cloud_ds;
+    }
+
+    // --- 5. RANSAC plane fit ---
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    seg.setOptimizeCoefficients(true);
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(0.02);  // tune as needed
+    seg.setMaxIterations(1000);
+
+    pcl::ModelCoefficients::Ptr coeff(new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    seg.setInputCloud(cloud);
+    seg.segment(*inliers, *coeff);
+
+    if (coeff->values.size() != 4) {
+      RCLCPP_WARN(get_logger(),
+                  "Ground plane: failed to estimate plane, coeff size = %zu",
+                  coeff->values.size());
+      return;
+    }
+
+    // --- DEBUG: publish inlier points as a separate cloud ---
+    if (!inliers->indices.empty()) {
+      pcl::PointCloud<pcl::PointXYZ>::Ptr inlier_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+      inlier_cloud->reserve(inliers->indices.size());
+      for (int idx : inliers->indices) {
+        if (idx >= 0 && static_cast<size_t>(idx) < cloud->size()) {
+          inlier_cloud->push_back((*cloud)[idx]);
+        }
+      }
+      inlier_cloud->width  = inlier_cloud->size();
+      inlier_cloud->height = 1;
+      inlier_cloud->is_dense = false;
+
+      sensor_msgs::msg::PointCloud2 inlier_msg;
+      pcl::toROSMsg(*inlier_cloud, inlier_msg);
+      inlier_msg.header.frame_id = map_frame_;          // we're already in odom/map frame
+      inlier_msg.header.stamp    = msg->header.stamp;
+      pub_ground_inliers_->publish(inlier_msg);
+
+      RCLCPP_INFO(get_logger(),
+                  "Ground plane: publishing %zu inliers on 'ground_plane/inliers'",
+                  inlier_cloud->size());
+    } else {
+      RCLCPP_WARN(get_logger(), "Ground plane: RANSAC returned 0 inliers.");
+    }
+
+
+    const float a = coeff->values[0];
+    const float b = coeff->values[1];
+    const float c = coeff->values[2];
+    const float d = coeff->values[3];
+
+    if (std::abs(c) < 1e-3f) {
+      RCLCPP_WARN(get_logger(),
+                  "Ground plane: plane normal too vertical (c = %f).", c);
+      return;
+    }
+
+    // Ground height at (x,y) = (0,0) in map_frame_/odom
+    const double ground_z0 = -d / c;
+
+    // Also check base height relative to that ground
+    double rx0, ry0, rz0, rYaw0;
+    if (getRobotPose(msg->header.stamp, rx0, ry0, rz0, rYaw0)) {
+      const double base_above_ground = rz0 - ground_z0;
+      RCLCPP_INFO(get_logger(),
+                  "Ground plane: z0=%.3f, base z=%.3f, base above ground=%.3f",
+                  ground_z0, rz0, base_above_ground);
+    } else {
+      RCLCPP_INFO(get_logger(),
+                  "Ground plane: z0=%.3f (base pose unavailable)", ground_z0);
+    }
+
+    // --- 6. Set MuJoCo z offset and mark as done ---
+    z_offset_ = ground_z0;
+    have_ground_plane_ = true;
+
+    RCLCPP_INFO(get_logger(),
+                "Ground plane estimated: %.3f x + %.3f y + %.3f z + %.3f = 0, "
+                "setting z_offset_ = %.3f",
+                a, b, c, d, z_offset_);
+
+    // Drop subscription; we only needed the first cloud
+    sub_cloud_.reset();
+  }
+
 private:
   // ROS
   std::string map_frame_, base_frame_, topic_cloud_, lidar_frame_;
@@ -522,11 +711,15 @@ private:
   bool use_voxel_ds_{false}, transform_cloud_if_needed_{true};
   double voxel_leaf_{0.05};
   double max_height_{2.0};
+  bool have_ground_plane_{false};
 
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_raw_, pub_fill_, pub_big_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_hm_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_ground_inliers_;
+
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::TimerBase::SharedPtr raycast_timer_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_;
 
   // Callback groups for multi-threaded execution
   rclcpp::CallbackGroup::SharedPtr subscriber_cb_group_;

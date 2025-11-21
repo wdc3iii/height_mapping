@@ -8,9 +8,11 @@ SHELL ["/bin/bash", "-c"]
 ARG USER=user
 ARG UID=1000
 ARG GID=1000
+ARG INSTALL_MUJOCO=true
 ENV USER=$USER
 ENV UID=$UID
 ENV GID=$GID
+ENV INSTALL_MUJOCO=$INSTALL_MUJOCO
 
 # set timezone
 ENV TZ=America/Los_Angeles
@@ -124,9 +126,17 @@ RUN mkdir -p ws_livox/src \
     && cd ws_livox/src \
     && git clone https://github.com/Livox-SDK/livox_ros_driver2.git
 WORKDIR /home/${USER}/ws_livox/src/livox_ros_driver2
-# RUN sed -i \
-#     -e 's/192\.168\.1\.5/192.168.123.222/g' \
-#     -e 's/192\.168\.1\.12/192.168.123.120/g' \
-#     config/MID360_config.json
 RUN bash -lc "source /opt/ros/humble/setup.bash && ./build.sh humble"
 WORKDIR /home/${USER}
+
+# [4] Conditionally install MuJoCo
+RUN if [ "$INSTALL_MUJOCO" = "true" ]; then \
+        echo "Installing MuJoCo..."; \
+        wget https://github.com/google-deepmind/mujoco/releases/download/3.2.3/mujoco-3.2.3-linux-x86_64.tar.gz \
+        && tar -xzf mujoco-3.2.3-linux-x86_64.tar.gz \
+        && sudo mv mujoco-3.2.3 /usr/local/mujoco \
+        && rm mujoco-3.2.3-linux-x86_64.tar.gz \
+        && echo "MuJoCo installed to /usr/local/mujoco"; \
+    else \
+        echo "Skipping MuJoCo installation (INSTALL_MUJOCO=$INSTALL_MUJOCO)"; \
+    fi

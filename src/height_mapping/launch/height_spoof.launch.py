@@ -66,7 +66,7 @@ def generate_launch_description():
     top_rviz_config = PathJoinSubstitution([
         FindPackageShare('height_mapping'),
         'rviz',
-        'heightmap.rviz'
+        'heightspoof.rviz'
     ])
 
     rviz_node = Node(
